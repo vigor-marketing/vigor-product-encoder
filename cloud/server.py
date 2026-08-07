@@ -300,7 +300,7 @@ def do_import(rows):
                         stats['pg'] += 1
                     exists = any(x.get('code') == code for x in pg['options'])
                     if not exists and code:
-                        pg['options'].append({'code': code, 'desc': desc})
+                        pg['options'].append({'code': code, 'desc': desc, 'desc_en': p.get('desc_en', '') or ''})
                         stats['opt'] += 1
                     continue
                 # 旧格式兼容：名称列当组名，选项文本拆分
@@ -495,10 +495,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         label = 'K%d' % (i + 1)
                         # 新格式：编码列 = 选项自定义编码，名称(中/英) = 选项描述
                         if ';' not in code_txt and '；' not in code_txt:
-                            desc = name_cn
-                            if name_en and name_en != name_cn:
-                                desc = (name_cn + ' / ' + name_en) if name_cn else name_en
-                            params.append({'label': label, 'code': code_txt, 'desc': desc})
+                            params.append({'label': label, 'code': code_txt, 'desc': name_cn, 'desc_en': name_en})
                             continue
                         # 旧格式兼容：编码列为 "编码 描述; 编码 描述"，名称列当组名
                         opts = []

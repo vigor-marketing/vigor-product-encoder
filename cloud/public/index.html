@@ -240,7 +240,7 @@ function RF(){
   let cn=[(a.cname||a.name)+(c.cname||c.name)+"。"+(p.cname||p.name)];
   let en=["API Spec "+a.name+" "+c.name+" "+p.name];
   let pg=p.paramGroups||[];
-  for(let j=0;j<pg.length;j++){let sp=SE[3+j];if(sp){cn.push(sp[1]||sp.desc);en.push(sp[1]||sp.desc);}}
+  for(let j=0;j<pg.length;j++){let sp=SE[3+j];if(sp){cn.push(sp.desc||sp[1]||sp.code);en.push(sp.desc_en||sp.desc||sp[1]||sp.code);}}
   i.innerHTML=`<div style="font-size:13px;font-weight:700;color:#166534;margin-top:10px">中文标准名称</div><div class="nc">${cn.join("，")}。</div><div style="font-size:16px;font-weight:700;color:#276749">English Name</div><div class="nc">${en.join(", ")}.</div>`;
 }
 
@@ -253,7 +253,7 @@ function SV(){
   let params=[];
   for(let i=0;i<(p.paramGroups||[]).length;i++){
     let pg=p.paramGroups[i];let sp=SE[3+i];
-    if(sp){cn.push(sp.desc||sp.code);en.push(sp.desc||sp.code);params.push({label:pg.label,name:pg.name,code:sp.code,desc:sp.desc});}
+    if(sp){cn.push(sp.desc||sp.code);en.push(sp.desc_en||sp.desc||sp.code);params.push({label:pg.label,name:pg.name,code:sp.code,desc:sp.desc,desc_en:sp.desc_en||""});}
   }
   SAVED.push({code,cn:cn.join("，")+"。",en:en.join(", ")+".",api:{code:a.code,name:a.name,cname:a.cname||""},cat:{code:c.code,name:c.name,cname:c.cname||""},prod:{code:p.code,name:p.name,cname:p.cname||""},params,t:new Date().toLocaleString()});
   sv();RS();M("已保存 "+code);
@@ -431,7 +431,7 @@ function RM(){
         h+=`<button class="btn btr" onclick="event.stopPropagation();DLP(${MA},${MC},${MP},${i})" style="font-size:12px;padding:3px 8px;min-width:0">✕</button>`;
         h+=`</div><div style="margin-top:6px">`;
         (g.options||[]).forEach((o,j)=>{
-          h+=`<span class="pv" style="cursor:pointer" onclick="event.stopPropagation();SEOPT(${MA},${MC},${MP},${i},${j})"><code>${E(o.code||o[0])}</code> ${E(o.desc||o[1])} <span style="cursor:pointer;color:#e53e3e" onclick="event.stopPropagation();DLO(${MA},${MC},${MP},${i},${j})">×</span></span>`;
+          h+=`<span class="pv" style="cursor:pointer" onclick="event.stopPropagation();SEOPT(${MA},${MC},${MP},${i},${j})"><code>${E(o.code||o[0])}</code> ${E(o.desc||o[1])}${o.desc_en?` <span style="color:#888">${E(o.desc_en)}</span>`:""} <span style="cursor:pointer;color:#e53e3e" onclick="event.stopPropagation();DLO(${MA},${MC},${MP},${i},${j})">×</span></span>`;
         });
         h+=`<button class="btn" onclick="event.stopPropagation();ADO(${MA},${MC},${MP},${i})" style="font-size:12px;padding:3px 8px">+选项</button>`;
         h+=`</div></div>`;
@@ -588,7 +588,8 @@ function SEdit(type,ai,ci,pi,gi,oi){
     if(!o){M("选项不存在");return;}
     title="编辑选项";
     h=`<div class="fd"><label>编码</label><input class="in" id="ef_c" value="${E(o.code||o[0])}"></div>
-        <div class="fd"><label>描述</label><input class="in" id="ef_n" value="${E(o.desc||o[1])}"></div>`;
+        <div class="fd"><label>描述(中文)</label><input class="in" id="ef_n" value="${E(o.desc||o[1])}"></div>
+        <div class="fd"><label>描述(英文)</label><input class="in" id="ef_ne" value="${E(o.desc_en||"")}"></div>`;
   }else if(type==="addopt"){
     title="添加选项";
     h=`<div class="fd"><label>编码 *</label><input class="in" id="ef_c" placeholder="如 45"></div>
@@ -605,7 +606,7 @@ function SVEd(){
   if(t==="cat"){DATA[ai].categories[ci].name=n;DATA[ai].categories[ci].cname=cn||"";sd();RM();M("已更新");CE();return;}
   if(t==="prod"){DATA[ai].categories[ci].products[pi].name=n;DATA[ai].categories[ci].products[pi].cname=cn||"";sd();RM();M("已更新");CE();return;}
   if(t==="pg"){let g=DATA[ai].categories[ci].products[pi].paramGroups[gi];g.label=cd;g.name=n;sd();ML=3;MP=pi;RM();M("已更新");CE();return;}
-  if(t==="opt"){let o=DATA[ai].categories[ci].products[pi].paramGroups[gi].options[oi];o.code=cd;o.desc=n;sd();ML=3;MP=pi;RM();M("已更新");CE();return;}
+  if(t==="opt"){let o=DATA[ai].categories[ci].products[pi].paramGroups[gi].options[oi];o.code=cd;o.desc=n;let ne=(q("ef_ne")||{}).value||"";if(ne)o.desc_en=ne;sd();ML=3;MP=pi;RM();M("已更新");CE();return;}
   if(t==="addapi"){let cs=DATA.map(x=>x.code);let c=NC1(cs,"A");if(cs.includes(c)){M("标准编码已满(A~Z)");return;}DATA.push({code:c,name:n,cname:cn||"",categories:[]});sd();RM();M("已添加 "+c);CE();return;}
   if(t==="addcat"){let cs=DATA[ai].categories.map(x=>x.code);let c=NC1(cs,"A");if(cs.includes(c)){M("子类编码已满(A~Z)");return;}DATA[ai].categories.push({code:c,name:n,cname:cn||"",products:[]});sd();RM();M("已添加 "+c);CE();return;}
   if(t==="addprod"){
