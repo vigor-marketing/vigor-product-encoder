@@ -51,6 +51,8 @@ if IS_PRODUCTION and not FRAME_ANCESTORS:
     raise RuntimeError('FRAME_ANCESTORS is required in production')
 if IS_PRODUCTION and '*' in FRAME_ANCESTORS:
     raise RuntimeError('FRAME_ANCESTORS must not contain a wildcard in production')
+if IS_PRODUCTION and (not API_READ_TOKEN or not API_WRITE_TOKEN):
+    raise RuntimeError('API_READ_TOKEN and API_WRITE_TOKEN are required in production')
 ALLOWED_EXT = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
                '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
                '.txt', '.csv', '.zip', '.rar', '.7z'}
