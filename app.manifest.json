@@ -1,0 +1,23 @@
+{
+  "appId": "vigor-product-encoder",
+  "name": "Vigor 产品编码器",
+  "version": "1.1.0",
+  "department": "procurement",
+  "entryPath": "/apps/product-encoder/",
+  "healthCheckPath": "/api/health",
+  "embedding": {
+    "mode": "iframe",
+    "frameAncestorsEnv": "FRAME_ANCESTORS"
+  },
+  "authentication": {
+    "current": "bearer-token-gateway",
+    "target": "oidc",
+    "requiredForWorkbench": true
+  },
+  "authorization": {
+    "read": ["sales", "procurement", "management"],
+    "write": ["procurement", "sales-support"],
+    "note": "The current API token split is a transitional boundary; replace it with OIDC scopes before production workbench use."
+  },
+  "dataBoundary": "This module owns product coding data and attachments. Other modules use APIs or events only and never write its storage directly."
+}
