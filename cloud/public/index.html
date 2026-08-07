@@ -219,7 +219,7 @@ function R(){
   for(let i=0;i<MX(p);i++){
     let dis=i>0&&!SE[i-1];let sel=SE[i];
     let g=i>=3?(p.paramGroups||[])[i-3]:null;
-    let lb=i<3?["选择产品分类","选择子类别","选择具体产品"][i]:(g?(g.label+" · "+g.name):"参数");
+    let lb=i<3?["选择产品分类","选择子类别","选择具体产品"][i]:(g?(g.name?(g.label+" · "+g.name):g.label):"参数");
     h+=`<div class="step"><div class="sl${dis?" g":""}" onclick="${dis?"":`OM(${i})`}">${i+1}. ${E(lb)}</div>`;
     if(sel)h+=`<div class="sr" onclick="${dis?"":`OM(${i})`}"><span class="tg">${E(sel.code)}</span>${E(sel.name||sel.cname||sel.desc)}</div>`;
     else h+=`<div class="sr p">${dis?"完成上一步":"请选择"}</div>`;

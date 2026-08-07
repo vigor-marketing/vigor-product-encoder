@@ -208,9 +208,29 @@ def do_import(rows):
             # 参数组（K1~K7）+ 选项
             pgs = prod.setdefault('paramGroups', [])
             for p in params:
+                label = str(p.get('label', '') or '').strip()
                 pcn = str(p.get('name_cn', '') or '').strip()
                 pen = str(p.get('name_en', '') or '').strip()
                 opts = p.get('opts') or []
+                code = str(p.get('code', '') or '').strip()
+                desc = str(p.get('desc', '') or '').strip()
+                # 新格式：编码 + 中英描述（按 K 编号匹配参数组，同组多行合并多选项）
+                if label and (code or desc):
+                    pg = None
+                    for g in pgs:
+                        if g.get('label') == label:
+                            pg = g
+                            break
+                    if pg is None:
+                        pg = {'label': label, 'name': '', 'options': []}
+                        pgs.append(pg)
+                        stats['pg'] += 1
+                    exists = any(x.get('code') == code for x in pg['options'])
+                    if not exists and code:
+                        pg['options'].append({'code': code, 'desc': desc})
+                        stats['opt'] += 1
+                    continue
+                # 旧格式兼容：名称列当组名，选项文本拆分
                 if not (pcn or pen):
                     continue
                 pg = None
@@ -376,8 +396,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 try:
                     wb = openpyxl.load_workbook(tmp)
                 finally:
-                    if os.path.exists(tmp):
-                        os.remove(tmp)
+                    try:
+                        if os.path.exists(tmp):
+                            os.remove(tmp)
+                    except Exception:
+                        pass  # 沙箱环境可能禁止删除，临时文件同名覆盖即可
                 ws = wb['产品导入'] if '产品导入' in wb.sheetnames else wb.active
                 rows = []
                 for r in range(2, ws.max_row + 1):
@@ -390,18 +413,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     for i in range(7):
                         name_cn = s(vals[6 + i * 3])
                         name_en = s(vals[7 + i * 3])
-                        opt_txt = s(vals[8 + i * 3])
-                        if not (name_cn or name_en or opt_txt):
+                        code_txt = s(vals[8 + i * 3])
+                        if not (name_cn or name_en or code_txt):
                             continue
+                        label = 'K%d' % (i + 1)
+                        # 新格式：编码列 = 选项自定义编码，名称(中/英) = 选项描述
+                        if ';' not in code_txt and '；' not in code_txt:
+                            desc = name_cn
+                            if name_en and name_en != name_cn:
+                                desc = (name_cn + ' / ' + name_en) if name_cn else name_en
+                            params.append({'label': label, 'code': code_txt, 'desc': desc})
+                            continue
+                        # 旧格式兼容：编码列为 "编码 描述; 编码 描述"，名称列当组名
                         opts = []
-                        if opt_txt:
-                            for part in opt_txt.split(';'):
-                                part = part.strip()
-                                if not part:
-                                    continue
-                                seg = part.split(None, 1)
-                                opts.append([seg[0], seg[1] if len(seg) > 1 else ''])
-                        params.append({'name_cn': name_cn, 'name_en': name_en, 'opts': opts})
+                        for part in re.split(r'[;；]', code_txt):
+                            part = part.strip()
+                            if not part:
+                                continue
+                            seg = part.split(None, 1)
+                            opts.append([seg[0], seg[1] if len(seg) > 1 else ''])
+                        params.append({'label': label, 'name_cn': name_cn, 'name_en': name_en, 'opts': opts})
                     rows.append({
                         'api_cn': s(vals[0]), 'api_en': s(vals[1]),
                         'cat_cn': s(vals[2]), 'cat_en': s(vals[3]),
