@@ -7,6 +7,7 @@ Vigor 编码器 - 云端版（CloudBase 云托管）
 """
 import base64
 import http.server
+import hmac
 import io
 import json
 import os
@@ -16,6 +17,7 @@ import socketserver
 import sys
 import threading
 import time
+import tempfile
 
 # COS SDK（可选，缺失时降级本地磁盘）
 try:
@@ -37,6 +39,20 @@ DATA_FILE = os.path.join(BASE, 'data.json')
 UPLOAD_DIR = os.path.join(BASE, 'uploads')
 PORT = int(os.environ.get('PORT') or '3000')  # 云托管注入 PORT；缺失时默认 3000（探针端口）
 WRITE_LOCK = threading.Lock()
+IS_PRODUCTION = os.environ.get('NODE_ENV', '').lower() == 'production'
+MAX_REQUEST_BYTES = int(os.environ.get('MAX_REQUEST_BYTES', str(12 * 1024 * 1024)))
+MAX_UPLOAD_BYTES = int(os.environ.get('MAX_UPLOAD_BYTES', str(10 * 1024 * 1024)))
+# Set these in CloudBase before enabling workbench access. READ token may only
+# read data; WRITE token is required for all mutations.
+API_READ_TOKEN = os.environ.get('API_READ_TOKEN', '')
+API_WRITE_TOKEN = os.environ.get('API_WRITE_TOKEN', '')
+FRAME_ANCESTORS = os.environ.get('FRAME_ANCESTORS', '').strip()
+if IS_PRODUCTION and not FRAME_ANCESTORS:
+    raise RuntimeError('FRAME_ANCESTORS is required in production')
+if IS_PRODUCTION and '*' in FRAME_ANCESTORS:
+    raise RuntimeError('FRAME_ANCESTORS must not contain a wildcard in production')
+if IS_PRODUCTION and (not API_READ_TOKEN or not API_WRITE_TOKEN):
+    raise RuntimeError('API_READ_TOKEN and API_WRITE_TOKEN are required in production')
 ALLOWED_EXT = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
                '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
                '.txt', '.csv', '.zip', '.rar', '.7z'}
@@ -156,14 +172,16 @@ def load_store():
 
 
 def save_store(store):
-    """写入云存储 + 本地缓存"""
+    """写入云存储 + 本地缓存；云端持久化失败时拒绝伪造成功。"""
     data = json.dumps(store, ensure_ascii=False, indent=1).encode('utf-8')
-    storage_put(DATA_KEY, data)
+    if cos() is not None and not storage_put(DATA_KEY, data):
+        return False
     try:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             f.write(data.decode('utf-8'))
     except Exception:
         pass
+    return True
 
 
 def build_import_file(rows):
@@ -308,13 +326,43 @@ def do_import(rows):
             stats['errors'].append('行: %s' % e)
 
     with WRITE_LOCK:
-        save_store(store)
+        if not save_store(store):
+            raise RuntimeError('数据持久化失败，请稍后重试')
     return stats
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC, **kwargs)
+
+    def _read_content_length(self, limit=MAX_REQUEST_BYTES):
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+        except ValueError:
+            raise ValueError('invalid content length')
+        if length < 0 or length > limit:
+            raise ValueError('request body too large')
+        return length
+
+    def _has_api_access(self, write=False):
+        # In production an explicit token is mandatory. Local development keeps
+        # compatibility until the workbench supplies OIDC access tokens.
+        if write:
+            expected = API_WRITE_TOKEN
+        else:
+            expected = API_READ_TOKEN or API_WRITE_TOKEN
+        if not expected:
+            return not IS_PRODUCTION
+        header = self.headers.get('Authorization', '')
+        if not header.startswith('Bearer '):
+            return False
+        return hmac.compare_digest(header[7:], expected)
+
+    def _require_api_access(self, write=False):
+        if self._has_api_access(write):
+            return True
+        self._send_json({"ok": False, "err": "unauthorized"}, 401)
+        return False
 
     def _send_json(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
@@ -327,13 +375,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
+        self.send_header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+        if FRAME_ANCESTORS:
+            self.send_header('Content-Security-Policy', 'frame-ancestors ' + FRAME_ANCESTORS)
         super().end_headers()
 
     def do_GET(self):
+        if self.path == '/api/health':
+            self._send_json({"status": "ok", "storage": "cos" if cos() is not None else "local"})
+            return
+        if self.path.startswith('/api/') and not self._require_api_access(write=False):
+            return
         if self.path == '/api/data':
             self._send_json(load_store())
             return
         if self.path.startswith('/uploads/'):
+            if not self._require_api_access(write=False):
+                return
             rel = self.path[len('/uploads/'):]
             if '..' in rel or '/' in rel:
                 self._send_json({"ok": False, "err": "bad path"}, 404)
@@ -359,9 +419,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        if self.path.startswith('/api/') and not self._require_api_access(write=True):
+            return
         if self.path == '/api/data':
             try:
-                length = int(self.headers.get('Content-Length', 0))
+                length = self._read_content_length()
                 raw = self.rfile.read(length)
                 store = json.loads(raw.decode('utf-8'))
                 if not isinstance(store, dict):
@@ -371,14 +433,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if not isinstance(store.get('saved'), list):
                     store['saved'] = []
                 with WRITE_LOCK:
-                    save_store(store)
+                    if not save_store(store):
+                        raise RuntimeError('数据持久化失败，请稍后重试')
                 self._send_json({"ok": True})
             except Exception as e:
                 self._send_json({"ok": False, "err": str(e)}, 400)
             return
         if self.path == '/api/upload':
             try:
-                length = int(self.headers.get('Content-Length', 0))
+                length = self._read_content_length()
                 raw = self.rfile.read(length)
                 req = json.loads(raw.decode('utf-8'))
                 name = str(req.get('name', 'file'))
@@ -390,7 +453,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if ext not in ALLOWED_EXT:
                     ext = '.bin'
                 fname = '%s_%d%s' % (base, int(time.time() * 1000), ext)
-                body = base64.b64decode(b64)
+                body = base64.b64decode(b64, validate=True)
+                if len(body) > MAX_UPLOAD_BYTES:
+                    raise ValueError('file too large')
                 # 存云存储（失败降级本地）
                 ok = storage_put(UPLOAD_PREFIX + fname, body)
                 if not ok:
@@ -403,7 +468,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if self.path == '/api/export':
             try:
-                length = int(self.headers.get('Content-Length', 0))
+                length = self._read_content_length()
                 raw = self.rfile.read(length)
                 req = json.loads(raw.decode('utf-8'))
                 rows = req.get('rows', [])
@@ -424,7 +489,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if self.path == '/api/import':
             try:
-                length = int(self.headers.get('Content-Length', 0))
+                length = self._read_content_length()
                 raw = self.rfile.read(length)
                 req = json.loads(raw.decode('utf-8'))
                 rows = req.get('rows', [])
@@ -439,16 +504,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if self.path == '/api/import_file':
             try:
-                length = int(self.headers.get('Content-Length', 0))
+                length = self._read_content_length()
                 raw = self.rfile.read(length)
                 req = json.loads(raw.decode('utf-8'))
                 name = str(req.get('name', 'import.xlsx'))
                 b64 = str(req.get('data', ''))
                 if not b64:
                     raise ValueError('no file data')
-                tmp = os.path.join(BASE, '_tmp_import.xlsx')
-                with open(tmp, 'wb') as f:
-                    f.write(base64.b64decode(b64))
+                body = base64.b64decode(b64, validate=True)
+                if len(body) > MAX_UPLOAD_BYTES:
+                    raise ValueError('file too large')
+                with tempfile.NamedTemporaryFile(dir=BASE, suffix='.xlsx', delete=False) as tmp_file:
+                    tmp_file.write(body)
+                    tmp = tmp_file.name
                 try:
                     wb = openpyxl.load_workbook(tmp)
                 finally:
