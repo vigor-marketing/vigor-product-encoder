@@ -59,6 +59,21 @@ python server.py
 - **批量导入**：Excel 标准表格（只填中英文名，编码自动），支持最大 7 参数
 - **附件管理**：产品可挂附件（图纸/证书），本地版存本机，云端版存云存储
 
+## 工作台 API（云端版）
+
+云端服务是产品主数据唯一写入方；工作台和其他小程序只能通过以下只读接口查询或拉取事件，不能直接访问或写入数据文件。
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/health` | 健康检查，返回应用与 API 版本 |
+| `GET /api/v1/products?cursor=&limit=&q=` | 产品目录分页查询，最多每页 100 条 |
+| `GET /api/v1/products/{productId}` | 按统一 `prd_...` ID 查询一个产品 |
+| `GET /api/v1/events?after=&limit=` | 拉取 `product.updated.v1` 事件；`after` 为已处理的 `eventId` |
+
+产品首次通过 v1 API 读取或下一次保存时，会获得不可复用的 `prd_...` 标识和审计字段；产品编码仍由编码器自身维护。事件保存在服务端出站队列（最多 1000 条），消费者必须按 `eventId` 幂等处理，并保存最后成功处理的事件 ID。
+
+这些响应遵循统一工作台的 [`@vigor/platform-contracts`](../workbench-platform/packages/contracts) 约定：成功响应为 `{ data, requestId }`，事件名带版本号。正式生产接入前仍需由工作台网关提供统一身份认证与访问控制。
+
 ## 备注
 
 - `data.json`、`uploads/` 为运行时数据，不入库（已在 .gitignore）
