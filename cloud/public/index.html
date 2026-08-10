@@ -219,7 +219,7 @@ function R(){
   for(let i=0;i<MX(p);i++){
     let dis=i>0&&!SE[i-1];let sel=SE[i];
     let g=i>=3?(p.paramGroups||[])[i-3]:null;
-    let lb=i<3?["选择产品分类","选择子类别","选择具体产品"][i]:(g?(g.name?(g.label+" · "+g.name):g.label):"参数");
+    let lb=i<3?["选择产品分类","选择子类别","选择具体产品"][i]:(g?(g.name?(g.label+" · "+g.name+(g.name_en?" / "+g.name_en:"")):g.label):"参数");
     h+=`<div class="step"><div class="sl${dis?" g":""}" onclick="${dis?"":`OM(${i})`}">${i+1}. ${E(lb)}</div>`;
     if(sel)h+=`<div class="sr" onclick="${dis?"":`OM(${i})`}"><span class="tg">${E(sel.code)}</span>${E(sel.name||sel.cname||sel.desc)}${sel.desc_en?` <span style="color:#90a0b0">${E(sel.desc_en)}</span>`:""}</div>`;
     else h+=`<div class="sr p">${dis?"完成上一步":"请选择"}</div>`;
@@ -240,7 +240,7 @@ function RF(){
   let cn=[(a.cname||a.name)+(c.cname||c.name)+"。"+(p.cname||p.name)];
   let en=["API Spec "+a.name+" "+c.name+" "+p.name];
   let pg=p.paramGroups||[];
-  for(let j=0;j<pg.length;j++){let sp=SE[3+j];if(sp){cn.push(sp.desc||sp[1]||sp.code);en.push(sp.desc_en||sp.desc||sp[1]||sp.code);}}
+  for(let j=0;j<pg.length;j++){let sp=SE[3+j];if(sp){let cnValue=sp.desc||sp[1]||sp.code,enValue=sp.desc_en||sp.desc||sp[1]||sp.code;cn.push((pg[j].name||pg[j].label)+"："+cnValue);en.push((pg[j].name_en||pg[j].name||pg[j].label)+": "+enValue);}}
   i.innerHTML=`<div style="font-size:13px;font-weight:700;color:#166534;margin-top:10px">中文标准名称</div><div class="nc">${cn.join("，")}。</div><div style="font-size:16px;font-weight:700;color:#276749">English Name</div><div class="nc">${en.join(", ")}.</div>`;
 }
 
@@ -253,7 +253,7 @@ function SV(){
   let params=[];
   for(let i=0;i<(p.paramGroups||[]).length;i++){
     let pg=p.paramGroups[i];let sp=SE[3+i];
-    if(sp){cn.push(sp.desc||sp.code);en.push(sp.desc_en||sp.desc||sp.code);params.push({label:pg.label,name:pg.name,code:sp.code,desc:sp.desc,desc_en:sp.desc_en||""});}
+    if(sp){let cnValue=sp.desc||sp.code,enValue=sp.desc_en||sp.desc||sp.code;cn.push((pg.name||pg.label)+"："+cnValue);en.push((pg.name_en||pg.name||pg.label)+": "+enValue);params.push({label:pg.label,name:pg.name,name_en:pg.name_en||"",code:sp.code,desc:sp.desc,desc_en:sp.desc_en||""});}
   }
   SAVED.push({code,cn:cn.join("，")+"。",en:en.join(", ")+".",api:{code:a.code,name:a.name,cname:a.cname||""},cat:{code:c.code,name:c.name,cname:c.cname||""},prod:{code:p.code,name:p.name,cname:p.cname||""},params,t:new Date().toLocaleString()});
   sv();RS();M("已保存 "+code);
@@ -331,14 +331,14 @@ function OM(i){
 }
 function OMR(){
   let kw=(q("ms")||{}).value||"";let opts=GO(MS,SE[0],SE[1],SE[2]);
-  let fil=kw?opts.filter(o=>(o.name||o[1]||"").toLowerCase().includes(kw.toLowerCase())||(o.code||o[0]||"").toLowerCase().includes(kw)):opts;
+  let fil=kw?opts.filter(o=>((o.desc||o.name||o[1]||"")+" "+(o.desc_en||"")).toLowerCase().includes(kw.toLowerCase())||(o.code||o[0]||"").toLowerCase().includes(kw)):opts;
   let h=`<div class="g2">`;
   for(let j=0;j<fil.length;j++){let o=fil[j];h+=`<div onclick="SO(${j})"><b>${E(o.code||o[0])}</b><br><span style="font-size:14px">${E(o.desc||o[1]||o.name||o.cname||"")}${o.desc_en?` <span style="color:#90a0b0">${E(o.desc_en)}</span>`:""}</span></div>`;}
   h+=`</div>`;q("mo").innerHTML=h;
 }
 function SO(idx){
   let opts=GO(MS,SE[0],SE[1],SE[2]);let kw=(q("ms")||{}).value||"";
-  let fil=kw?opts.filter(o=>(o.name||o[1]||"").toLowerCase().includes(kw.toLowerCase())||(o.code||o[0]||"").toLowerCase().includes(kw)):opts;
+  let fil=kw?opts.filter(o=>((o.desc||o.name||o[1]||"")+" "+(o.desc_en||"")).toLowerCase().includes(kw.toLowerCase())||(o.code||o[0]||"").toLowerCase().includes(kw)):opts;
   if(!fil[idx])return;for(let i=MS;i<10;i++)SE[i]=null;SE[MS]=fil[idx];CM();R();
 }
 function CM(){q("md").classList.remove("s");}
@@ -424,7 +424,7 @@ function RM(){
       h+=`<div class="g2">`;
       pg.forEach((g,i)=>{
         h+=`<div style="cursor:default;text-align:center"><div class="lb" style="background:linear-gradient(135deg,#38a169,#48bb78)">${E(g.label)}</div>`;
-        h+=`<div style="font-weight:600;font-size:16px">${E(g.name)}</div>`;
+        h+=`<div style="font-weight:600;font-size:16px">${E(g.name)}</div>${g.name_en?`<div style="color:#6b7280;font-size:14px">${E(g.name_en)}</div>`:""}`;
         h+=`<div class="sc">${(g.options||[]).length} 选项</div>`;
         h+=`<div style="position:absolute;top:8px;right:8px">`;
         h+=`<button class="btn" onclick="event.stopPropagation();SEPG(${MA},${MC},${MP},${i})" style="font-size:12px;padding:3px 8px;min-width:0">✏</button>`;
@@ -460,7 +460,7 @@ function SVP(ai,ci,pi,i){
   g.label=l;g.name=n;sd();ML=3;MP=pi;RM();M("已保存");
 }
 function DLP(ai,ci,pi,i){CF("确定删除该参数组吗？",function(){let pg=DATA[ai].categories[ci].products[pi];(pg.params||pg.paramGroups).splice(i,1);sd();ML=3;MP=pi;RM();M("已删除");});}
-function ADP(ai,ci,pi){let p=DATA[ai].categories[ci].products[pi];let pg=p.paramGroups||[];pg.push({label:"K"+(pg.length+1),name:"新参数",options:[]});sd();ML=3;MP=pi;RM();M("已添加参数组");}
+function ADP(ai,ci,pi){let p=DATA[ai].categories[ci].products[pi];let pg=p.paramGroups||[];pg.push({label:"K"+(pg.length+1),name:"新参数",name_en:"",options:[]});sd();ML=3;MP=pi;RM();M("已添加参数组");}
 function ADO(ai,ci,pi,i){SEdit("addopt",ai,ci,pi,i);}
 function DLO(ai,ci,pi,i,j){CF("确定删除该选项吗？",function(){let pg=DATA[ai].categories[ci].products[pi];(pg.params||pg.paramGroups||[])[i].options.splice(j,1);sd();ML=3;MP=pi;RM();});}
 function SEPG(ai,ci,pi,gi){SEdit("pg",ai,ci,pi,gi);}
@@ -582,7 +582,8 @@ function SEdit(type,ai,ci,pi,gi,oi){
     if(!g){M("参数组不存在");return;}
     title="编辑参数组";
     h=`<div class="fd"><label>标签 (如 K1)</label><input class="in" id="ef_c" value="${E(g.label)}"></div>
-        <div class="fd"><label>名称</label><input class="in" id="ef_n" value="${E(g.name)}"></div>`;
+        <div class="fd"><label>名称（中文）</label><input class="in" id="ef_n" value="${E(g.name)}"></div>
+        <div class="fd"><label>名称（英文）</label><input class="in" id="ef_ne" value="${E(g.name_en||"")}"></div>`;
   }else if(type==="opt"){
     let o=DATA[ai].categories[ci].products[pi].paramGroups[gi].options[oi];
     if(!o){M("选项不存在");return;}
@@ -605,7 +606,7 @@ function SVEd(){
   if(t==="api"){DATA[ai].name=n;DATA[ai].cname=cn||"";sd();RM();M("已更新");CE();return;}
   if(t==="cat"){DATA[ai].categories[ci].name=n;DATA[ai].categories[ci].cname=cn||"";sd();RM();M("已更新");CE();return;}
   if(t==="prod"){DATA[ai].categories[ci].products[pi].name=n;DATA[ai].categories[ci].products[pi].cname=cn||"";sd();RM();M("已更新");CE();return;}
-  if(t==="pg"){let g=DATA[ai].categories[ci].products[pi].paramGroups[gi];g.label=cd;g.name=n;sd();ML=3;MP=pi;RM();M("已更新");CE();return;}
+  if(t==="pg"){let g=DATA[ai].categories[ci].products[pi].paramGroups[gi];g.label=cd;g.name=n;g.name_en=getV("ef_ne");sd();ML=3;MP=pi;RM();M("已更新");CE();return;}
   if(t==="opt"){let o=DATA[ai].categories[ci].products[pi].paramGroups[gi].options[oi];o.code=cd;o.desc=n;let ne=(q("ef_ne")||{}).value||"";if(ne)o.desc_en=ne;sd();ML=3;MP=pi;RM();M("已更新");CE();return;}
   if(t==="addapi"){let cs=DATA.map(x=>x.code);let c=NC1(cs,"A");if(cs.includes(c)){M("标准编码已满(A~Z)");return;}DATA.push({code:c,name:n,cname:cn||"",categories:[]});sd();RM();M("已添加 "+c);CE();return;}
   if(t==="addcat"){let cs=DATA[ai].categories.map(x=>x.code);let c=NC1(cs,"A");if(cs.includes(c)){M("子类编码已满(A~Z)");return;}DATA[ai].categories.push({code:c,name:n,cname:cn||"",products:[]});sd();RM();M("已添加 "+c);CE();return;}

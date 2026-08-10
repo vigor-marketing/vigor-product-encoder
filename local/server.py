@@ -209,8 +209,9 @@ def do_import(rows):
             pgs = prod.setdefault('paramGroups', [])
             for p in params:
                 label = str(p.get('label', '') or '').strip()
-                pcn = str(p.get('name_cn', '') or '').strip()
-                pen = str(p.get('name_en', '') or '').strip()
+                # 新版导入列将“参数分类名称”与“参数选项名称”分开保存；旧版仍回退 name_cn/name_en。
+                pcn = str(p.get('group_name_cn', p.get('name_cn', '')) or '').strip()
+                pen = str(p.get('group_name_en', p.get('name_en', '')) or '').strip()
                 opts = p.get('opts') or []
                 code = str(p.get('code', '') or '').strip()
                 desc = str(p.get('desc', '') or '').strip()
@@ -222,9 +223,16 @@ def do_import(rows):
                             pg = g
                             break
                     if pg is None:
-                        pg = {'label': label, 'name': '', 'options': []}
+                        pg = {'label': label, 'name': '', 'name_en': '', 'options': []}
                         pgs.append(pg)
                         stats['pg'] += 1
+                    # 允许新版导入修复历史错误：只有空值或“中英文被写成同一个值”时才替换，保留人工维护的有效翻译。
+                    old_name = str(pg.get('name', '') or '').strip()
+                    old_name_en = str(pg.get('name_en', '') or '').strip()
+                    if pcn and (not old_name or old_name == old_name_en):
+                        pg['name'] = pcn
+                    if pen and (not old_name_en or old_name_en == old_name or old_name_en == pcn):
+                        pg['name_en'] = pen
                     existing = None
                     for x in pg['options']:
                         if x.get('code') == code:
@@ -414,8 +422,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         pass  # 沙箱环境可能禁止删除，临时文件同名覆盖即可
                 ws = wb['产品导入'] if '产品导入' in wb.sheetnames else wb.active
                 rows = []
+                # 新版 41 列：基础 6 列 + K1-K7 每组 5 列（分类中/分类英/编码/选项中/选项英）。
+                # 旧版 27 列仍可导入，避免已发出的历史模板失效。
+                # 以第 7 列是否为新版的“参数1分类名称(中)”精确识别，避免旧表附带格式列时错位。
+                first_param_header = str(ws.cell(row=1, column=7).value or '').strip()
+                is_new_layout = first_param_header == '参数1分类名称(中)'
+                last_col = 41 if is_new_layout else 27
                 for r in range(2, ws.max_row + 1):
-                    vals = [ws.cell(row=r, column=c).value for c in range(1, 28)]
+                    vals = [ws.cell(row=r, column=c).value for c in range(1, last_col + 1)]
                     if all(v is None or str(v).strip() == '' for v in vals):
                         continue
                     # 跳过模板示例行/提示行：黄色填充(FEF3C7) 或 文本含"示例/黄色/删除"
@@ -436,18 +450,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         return '' if v is None else str(v).strip()
                     params = []
                     for i in range(7):
-                        # 参数列顺序：编码、名称(中)、名称(英)
+                        label = 'K%d' % (i + 1)
+                        if is_new_layout:
+                            # 新版顺序：参数分类名称(中)、参数分类名称(英)、参数编码、参数名称(中)、参数名称(英)
+                            base = 6 + i * 5
+                            group_cn = s(vals[base])
+                            group_en = s(vals[base + 1])
+                            code_txt = s(vals[base + 2])
+                            name_cn = s(vals[base + 3])
+                            name_en = s(vals[base + 4])
+                            if group_cn or group_en or code_txt or name_cn or name_en:
+                                params.append({'label': label, 'group_name_cn': group_cn, 'group_name_en': group_en, 'code': code_txt, 'desc': name_cn, 'desc_en': name_en})
+                            continue
+                        # 旧版顺序：参数编码、参数名称(中)、参数名称(英)
                         code_txt = s(vals[6 + i * 3])
                         name_cn = s(vals[7 + i * 3])
                         name_en = s(vals[8 + i * 3])
                         if not (name_cn or name_en or code_txt):
                             continue
-                        label = 'K%d' % (i + 1)
-                        # 新格式：编码列 = 选项自定义编码，名称(中/英) = 选项描述
                         if ';' not in code_txt and '；' not in code_txt:
                             params.append({'label': label, 'code': code_txt, 'desc': name_cn, 'desc_en': name_en})
                             continue
-                        # 旧格式兼容：编码列为 "编码 描述; 编码 描述"，名称列当组名
                         opts = []
                         for part in re.split(r'[;；]', code_txt):
                             part = part.strip()
