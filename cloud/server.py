@@ -298,10 +298,17 @@ def do_import(rows):
                         pg = {'label': label, 'name': '', 'options': []}
                         pgs.append(pg)
                         stats['pg'] += 1
-                    exists = any(x.get('code') == code for x in pg['options'])
-                    if not exists and code:
+                    existing = next((x for x in pg['options'] if x.get('code') == code), None)
+                    if existing is None and code:
                         pg['options'].append({'code': code, 'desc': desc, 'desc_en': p.get('desc_en', '') or ''})
                         stats['opt'] += 1
+                    elif existing is not None:
+                        # 同编码已存在时，只补齐缺失的中英文信息
+                        if desc and not existing.get('desc'):
+                            existing['desc'] = desc
+                        desc_en = str(p.get('desc_en', '') or '').strip()
+                        if desc_en and not existing.get('desc_en'):
+                            existing['desc_en'] = desc_en
                     continue
                 # 旧格式兼容：名称列当组名，选项文本拆分
                 if not (pcn or pen):
@@ -327,8 +334,8 @@ def do_import(rows):
         except Exception as e:
             stats['errors'].append('行: %s' % e)
 
-    with WRITE_LOCK:
-        save_store(store)
+    # save_store 内部自带写锁；这里不能重复加锁（Lock 不可重入）
+    save_store(store)
     return stats
 
 
@@ -390,8 +397,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     store['data'] = []
                 if not isinstance(store.get('saved'), list):
                     store['saved'] = []
-                with WRITE_LOCK:
-                    save_store(store)
+                # save_store 内部已加锁，避免 Lock 不可重入导致请求卡住
+                save_store(store)
                 self._send_json({"ok": True})
             except Exception as e:
                 self._send_json({"ok": False, "err": str(e)}, 400)
@@ -483,13 +490,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     vals = [ws.cell(row=r, column=c).value for c in range(1, 28)]
                     if all(v is None or str(v).strip() == '' for v in vals):
                         continue
+                    # 跳过模板黄色示例行及说明提示行，避免被导入为真实产品
+                    cell1 = ws.cell(row=r, column=1)
+                    try:
+                        fl = cell1.fill
+                        fg = str(fl.fgColor.rgb if fl and fl.fgColor else '')
+                        if fl and fl.patternType and 'FEF3C7' in fg:
+                            continue
+                    except Exception:
+                        pass
+                    row_txt = ''.join(str(v) for v in vals if v is not None)
+                    if '示例' in row_txt or '黄色' in row_txt or '删除后填写' in row_txt:
+                        continue
                     def s(v):
                         return '' if v is None else str(v).strip()
                     params = []
                     for i in range(7):
-                        name_cn = s(vals[6 + i * 3])
-                        name_en = s(vals[7 + i * 3])
-                        code_txt = s(vals[8 + i * 3])
+                        # 参数列顺序：编码、名称(中)、名称(英)
+                        code_txt = s(vals[6 + i * 3])
+                        name_cn = s(vals[7 + i * 3])
+                        name_en = s(vals[8 + i * 3])
                         if not (name_cn or name_en or code_txt):
                             continue
                         label = 'K%d' % (i + 1)

@@ -221,7 +221,7 @@ function R(){
     let g=i>=3?(p.paramGroups||[])[i-3]:null;
     let lb=i<3?["选择产品分类","选择子类别","选择具体产品"][i]:(g?(g.name?(g.label+" · "+g.name):g.label):"参数");
     h+=`<div class="step"><div class="sl${dis?" g":""}" onclick="${dis?"":`OM(${i})`}">${i+1}. ${E(lb)}</div>`;
-    if(sel)h+=`<div class="sr" onclick="${dis?"":`OM(${i})`}"><span class="tg">${E(sel.code)}</span>${E(sel.name||sel.cname||sel.desc)}</div>`;
+    if(sel)h+=`<div class="sr" onclick="${dis?"":`OM(${i})`}"><span class="tg">${E(sel.code)}</span>${E(sel.name||sel.cname||sel.desc)}${sel.desc_en?` <span style="color:#90a0b0">${E(sel.desc_en)}</span>`:""}</div>`;
     else h+=`<div class="sr p">${dis?"完成上一步":"请选择"}</div>`;
     h+=`</div>`;
   }
@@ -324,7 +324,7 @@ function OM(i){
   let h=`<input class="in" id="ms" placeholder="搜索..." oninput="OMR()"><div class="g2">`;
   for(let j=0;j<opts.length;j++){
     let o=opts[j];
-    h+=`<div onclick="SO(${j})"><b>${E(o.code||o[0])}</b><br><span style="font-size:14px">${E(o.name||o.cname||o[1]||o.desc)}</span></div>`;
+    h+=`<div onclick="SO(${j})"><b>${E(o.code||o[0])}</b><br><span style="font-size:14px">${E(o.desc||o[1]||o.name||o.cname||"")}${o.desc_en?` <span style="color:#90a0b0">${E(o.desc_en)}</span>`:""}</span></div>`;
   }
   h+=`</div>`;
   q("mt").textContent=["选择产品分类","选择子类别","选择具体产品"][i]||"选择";q("mo").innerHTML=h;q("md").classList.add("s");
@@ -333,7 +333,7 @@ function OMR(){
   let kw=(q("ms")||{}).value||"";let opts=GO(MS,SE[0],SE[1],SE[2]);
   let fil=kw?opts.filter(o=>(o.name||o[1]||"").toLowerCase().includes(kw.toLowerCase())||(o.code||o[0]||"").toLowerCase().includes(kw)):opts;
   let h=`<div class="g2">`;
-  for(let j=0;j<fil.length;j++){let o=fil[j];h+=`<div onclick="SO(${j})"><b>${E(o.code||o[0])}</b><br><span style="font-size:14px">${E(o.name||o.cname||o[1]||o.desc)}</span></div>`;}
+  for(let j=0;j<fil.length;j++){let o=fil[j];h+=`<div onclick="SO(${j})"><b>${E(o.code||o[0])}</b><br><span style="font-size:14px">${E(o.desc||o[1]||o.name||o.cname||"")}${o.desc_en?` <span style="color:#90a0b0">${E(o.desc_en)}</span>`:""}</span></div>`;}
   h+=`</div>`;q("mo").innerHTML=h;
 }
 function SO(idx){

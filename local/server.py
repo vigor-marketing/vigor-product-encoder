@@ -225,10 +225,21 @@ def do_import(rows):
                         pg = {'label': label, 'name': '', 'options': []}
                         pgs.append(pg)
                         stats['pg'] += 1
-                    exists = any(x.get('code') == code for x in pg['options'])
-                    if not exists and code:
+                    existing = None
+                    for x in pg['options']:
+                        if x.get('code') == code:
+                            existing = x
+                            break
+                    if existing is None and code:
                         pg['options'].append({'code': code, 'desc': desc, 'desc_en': p.get('desc_en', '') or ''})
                         stats['opt'] += 1
+                    elif existing is not None:
+                        # 同编码已存在：补全缺失的中英文描述
+                        if desc and not existing.get('desc'):
+                            existing['desc'] = desc
+                        new_en = str(p.get('desc_en', '') or '').strip()
+                        if new_en and not existing.get('desc_en'):
+                            existing['desc_en'] = new_en
                     continue
                 # 旧格式兼容：名称列当组名，选项文本拆分
                 if not (pcn or pen):
@@ -407,13 +418,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     vals = [ws.cell(row=r, column=c).value for c in range(1, 28)]
                     if all(v is None or str(v).strip() == '' for v in vals):
                         continue
+                    # 跳过模板示例行/提示行：黄色填充(FEF3C7) 或 文本含"示例/黄色/删除"
+                    cell1 = ws.cell(row=r, column=1)
+                    try:
+                        fl = cell1.fill
+                        fg = ''
+                        if fl and fl.patternType:
+                            fg = str(fl.fgColor.rgb if fl.fgColor else '')
+                        if 'FEF3C7' in fg:
+                            continue
+                    except Exception:
+                        pass
+                    row_txt = ''.join(str(v) for v in vals if v is not None)
+                    if '示例' in row_txt or '黄色' in row_txt or '删除后填写' in row_txt:
+                        continue
                     def s(v):
                         return '' if v is None else str(v).strip()
                     params = []
                     for i in range(7):
-                        name_cn = s(vals[6 + i * 3])
-                        name_en = s(vals[7 + i * 3])
-                        code_txt = s(vals[8 + i * 3])
+                        # 参数列顺序：编码、名称(中)、名称(英)
+                        code_txt = s(vals[6 + i * 3])
+                        name_cn = s(vals[7 + i * 3])
+                        name_en = s(vals[8 + i * 3])
                         if not (name_cn or name_en or code_txt):
                             continue
                         label = 'K%d' % (i + 1)
