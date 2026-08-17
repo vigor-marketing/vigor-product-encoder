@@ -156,14 +156,17 @@ def load_store():
 
 
 def save_store(store):
-    """写入云存储 + 本地缓存"""
+    """写入云存储 + 本地缓存；本地缓存采用写锁 + 临时文件原子替换，避免并发/中途断电损坏"""
     data = json.dumps(store, ensure_ascii=False, indent=1).encode('utf-8')
     storage_put(DATA_KEY, data)
-    try:
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            f.write(data.decode('utf-8'))
-    except Exception:
-        pass
+    with WRITE_LOCK:
+        try:
+            tmp = DATA_FILE + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.write(data.decode('utf-8'))
+            os.replace(tmp, DATA_FILE)
+        except Exception:
+            pass
 
 
 def build_import_file(rows):
@@ -192,39 +195,43 @@ def build_import_file(rows):
     return out.getvalue()
 
 
+def next_code(cs, length):
+    """取已有编码最大值 +1 生成下一编码：length=1 为 A~Z，length=2 为 AA~ZZ；已满返回 None。"""
+    mx = -1
+    for c in cs:
+        if isinstance(c, str) and len(c) == length and c.isalpha() and c.isupper():
+            n = 0
+            for ch in c:
+                n = n * 26 + (ord(ch) - 65)
+            if n > mx:
+                mx = n
+    nxt = mx + 1
+    if length == 1:
+        if nxt >= 26:
+            return None
+        return chr(65 + nxt)
+    else:
+        if nxt >= 676:
+            return None
+        return chr(65 + nxt // 26) + chr(65 + nxt % 26)
+
+
+def match(item, cn, en):
+    """按中英文名匹配（中文优先，其次英文）"""
+    if not cn and not en:
+        return False
+    if cn and (item.get('cname') == cn or item.get('name') == cn):
+        return True
+    if en and (item.get('name') == en or item.get('cname') == en):
+        return True
+    return False
+
+
 def do_import(rows):
     """批量导入产品信息（标准→子类→产品→参数组→选项 层级）。编码全自动，按中文名称匹配。"""
     store = load_store()
     data = store.setdefault('data', [])
     stats = {'api': 0, 'cat': 0, 'prod': 0, 'pg': 0, 'opt': 0, 'errors': []}
-
-    def next_code(cs, length):
-        mx = -1
-        for c in cs:
-            if isinstance(c, str) and len(c) == length and c.isalpha() and c.isupper():
-                n = 0
-                for ch in c:
-                    n = n * 26 + (ord(ch) - 65)
-                if n > mx:
-                    mx = n
-        nxt = mx + 1
-        if length == 1:
-            if nxt >= 26:
-                return None
-            return chr(65 + nxt)
-        else:
-            if nxt >= 676:
-                return None
-            return chr(65 + nxt // 26) + chr(65 + nxt % 26)
-
-    def match(item, cn, en):
-        if not cn and not en:
-            return False
-        if cn and (item.get('cname') == cn or item.get('name') == cn):
-            return True
-        if en and (item.get('name') == en or item.get('cname') == en):
-            return True
-        return False
 
     for row in rows:
         try:
@@ -342,7 +349,7 @@ def do_import(rows):
         except Exception as e:
             stats['errors'].append('行: %s' % e)
 
-    # save_store 内部自带写锁；这里不能重复加锁（Lock 不可重入）
+    # save_store 内部已处理本地缓存的写锁与原子替换；此处不重复加锁
     save_store(store)
     return stats
 

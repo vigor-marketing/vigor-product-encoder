@@ -59,6 +59,17 @@ python server.py
 - **批量导入**：Excel 标准表格（只填中英文名，编码自动），支持最大 7 参数
 - **附件管理**：产品可挂附件（图纸/证书），本地版存本机，云端版存云存储
 
+## 开发与测试
+
+```bash
+# 一次性安装测试依赖
+pip install pytest openpyxl
+# 运行测试（同一套用例在 local/ 与 cloud/ 上各跑一遍）
+pytest -v
+```
+
+测试不依赖真实 `data.json`（使用临时目录隔离），也不需要腾讯云密钥（云端版无密钥时自动降级本地磁盘）。
+
 ## 备注
 
 - `data.json`、`uploads/` 为运行时数据，不入库（已在 .gitignore）

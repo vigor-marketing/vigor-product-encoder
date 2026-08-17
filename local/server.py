@@ -110,6 +110,38 @@ def build_import_file(rows):
     return out.getvalue()
 
 
+def next_code(cs, length):
+    """取已有编码最大值 +1 生成下一编码：length=1 为 A~Z，length=2 为 AA~ZZ；已满返回 None。"""
+    mx = -1
+    for c in cs:
+        if isinstance(c, str) and len(c) == length and c.isalpha() and c.isupper():
+            n = 0
+            for ch in c:
+                n = n * 26 + (ord(ch) - 65)
+            if n > mx:
+                mx = n
+    nxt = mx + 1
+    if length == 1:
+        if nxt >= 26:
+            return None
+        return chr(65 + nxt)
+    else:
+        if nxt >= 676:
+            return None
+        return chr(65 + nxt // 26) + chr(65 + nxt % 26)
+
+
+def match(item, cn, en):
+    """按中英文名匹配（中文优先，其次英文）"""
+    if not cn and not en:
+        return False
+    if cn and (item.get('cname') == cn or item.get('name') == cn):
+        return True
+    if en and (item.get('name') == en or item.get('cname') == en):
+        return True
+    return False
+
+
 def do_import(rows):
     """批量导入产品信息（标准→子类→产品→参数组→选项 层级）。
     rows: [{api_cn,api_en,cat_cn,cat_en,prod_cn,prod_en,params:[{name_cn,name_en,opts:[[code,desc],...]}]}]
@@ -119,35 +151,6 @@ def do_import(rows):
     store = load_store()
     data = store.setdefault('data', [])
     stats = {'api': 0, 'cat': 0, 'prod': 0, 'pg': 0, 'opt': 0, 'errors': []}
-
-    def next_code(cs, length):
-        mx = -1
-        for c in cs:
-            if isinstance(c, str) and len(c) == length and c.isalpha() and c.isupper():
-                n = 0
-                for ch in c:
-                    n = n * 26 + (ord(ch) - 65)
-                if n > mx:
-                    mx = n
-        nxt = mx + 1
-        if length == 1:
-            if nxt >= 26:
-                return None
-            return chr(65 + nxt)
-        else:
-            if nxt >= 676:
-                return None
-            return chr(65 + nxt // 26) + chr(65 + nxt % 26)
-
-    def match(item, cn, en):
-        """按中英文名匹配（中文优先，其次英文）"""
-        if not cn and not en:
-            return False
-        if cn and (item.get('cname') == cn or item.get('name') == cn):
-            return True
-        if en and (item.get('name') == en or item.get('cname') == en):
-            return True
-        return False
 
     for row in rows:
         try:
