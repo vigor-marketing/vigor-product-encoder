@@ -165,15 +165,17 @@ def load_store():
 
 
 def save_store(store):
-    """写入云存储 + 本地缓存；本地缓存采用写锁 + 临时文件原子替换，避免并发/中途断电损坏"""
+    """写入云存储 + 本地缓存；本地缓存采用写锁 + 临时文件原子替换，避免并发/中途断电损坏。
+    CVM 部署下 data.json 是指向 /var/lib 的软链，必须解析真实路径后原子替换，不能在只读程序目录写临时文件。"""
     data = json.dumps(store, ensure_ascii=False, indent=1).encode('utf-8')
     storage_put(DATA_KEY, data)
     with WRITE_LOCK:
         try:
-            tmp = DATA_FILE + '.tmp'
+            real = os.path.realpath(DATA_FILE)
+            tmp = real + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
                 f.write(data.decode('utf-8'))
-            os.replace(tmp, DATA_FILE)
+            os.replace(tmp, real)
         except Exception:
             pass
 

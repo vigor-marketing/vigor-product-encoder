@@ -73,12 +73,13 @@ def load_store():
 
 
 def save_store(store):
-    """写入磁盘数据文件（先写临时文件再替换，避免中途断电损坏）"""
+    """写入磁盘数据文件（先写临时文件再替换，避免中途断电损坏；解析软链真实路径，兼容 CVM 形态）"""
     with WRITE_LOCK:
-        tmp = DATA_FILE + '.tmp'
+        real = os.path.realpath(DATA_FILE)
+        tmp = real + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(store, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, DATA_FILE)
+        os.replace(tmp, real)
 
 
 def build_import_file(rows):
