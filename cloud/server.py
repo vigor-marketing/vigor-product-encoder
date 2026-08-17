@@ -6,6 +6,7 @@ Vigor 编码器 - 云端版（CloudBase 云托管）
 - 监听平台注入的 PORT
 """
 import base64
+import hashlib
 import http.server
 import io
 import json
@@ -16,6 +17,9 @@ import socketserver
 import sys
 import threading
 import time
+import uuid
+from datetime import datetime, timezone
+from urllib.parse import parse_qs, unquote, urlparse
 
 # COS SDK（可选，缺失时降级本地磁盘）
 try:
@@ -36,6 +40,8 @@ TEMPLATE_FILE = os.path.join(TEMPLATE_DIR, '产品导入模版.xls')
 DATA_FILE = os.path.join(BASE, 'data.json')
 UPLOAD_DIR = os.path.join(BASE, 'uploads')
 PORT = int(os.environ.get('PORT') or '3000')  # 云托管注入 PORT；缺失时默认 3000（探针端口）
+# CloudBase 默认需对容器网络提供服务；CVM 部署可设为 127.0.0.1，仅允许反向代理访问。
+BIND_HOST = os.environ.get('BIND_HOST') or '0.0.0.0'
 WRITE_LOCK = threading.Lock()
 ALLOWED_EXT = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
                '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
@@ -53,6 +59,9 @@ COS_BUCKET = os.environ.get('TCB_BUCKET', '6d6f-monktestcloud-d8gnzlwaw449aa8b8-
 COS_REGION = os.environ.get('TCB_REGION', 'ap-shanghai')
 DATA_KEY = 'vigor/data.json'
 UPLOAD_PREFIX = 'vigor/uploads/'
+APP_ID = 'product-encoder'
+SYSTEM_ACTOR_ID = 'usr_system'
+EVENT_OUTBOX_LIMIT = 1000
 
 
 def get_cos_client():
@@ -169,6 +178,137 @@ def save_store(store):
             pass
 
 
+# ===== 工作台产品契约（只读 API + 可拉取事件） =====
+def utc_now():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+
+
+def request_id():
+    return 'req_' + uuid.uuid4().hex
+
+
+def product_paths(data):
+    """返回产品及其稳定层级路径；产品编码在现有界面中为只读字段。"""
+    for api in data or []:
+        for category in api.get('categories', []) or []:
+            for product in category.get('products', []) or []:
+                path = '%s/%s/%s' % (api.get('code', ''), category.get('code', ''), product.get('code', ''))
+                yield path, api, category, product
+
+
+def product_signature(api, category, product):
+    """业务字段变化时更新审计时间；平台元数据自身不参与签名。"""
+    payload = {
+        'api': {'code': api.get('code'), 'name': api.get('name'), 'cname': api.get('cname')},
+        'category': {'code': category.get('code'), 'name': category.get('name'), 'cname': category.get('cname')},
+        'product': {k: v for k, v in product.items() if k != '_platform'},
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
+
+
+def sync_product_metadata(data, previous_data=None):
+    """为产品补齐不可复用的 prd_ ID 和审计元数据，返回发生业务变化的条目。"""
+    previous = {}
+    for path, api, category, product in product_paths(previous_data or []):
+        meta = product.get('_platform') or {}
+        if isinstance(meta.get('productId'), str) and meta['productId'].startswith('prd_'):
+            previous[path] = (api, category, product, meta)
+
+    now = utc_now()
+    current_ids = set()
+    changes = []
+    for path, api, category, product in product_paths(data):
+        old = previous.get(path)
+        old_meta = old[3] if old else {}
+        raw_meta = product.get('_platform') if isinstance(product.get('_platform'), dict) else {}
+        product_id = old_meta.get('productId') or raw_meta.get('productId')
+        has_platform_id = isinstance(product_id, str) and product_id.startswith('prd_')
+        if not has_platform_id:
+            product_id = 'prd_' + uuid.uuid4().hex
+        signature = product_signature(api, category, product)
+        previous_signature = old_meta.get('signature') or raw_meta.get('signature')
+        created_at = old_meta.get('createdAt') or raw_meta.get('createdAt') or now
+        created_by = old_meta.get('createdBy') or raw_meta.get('createdBy') or SYSTEM_ACTOR_ID
+        changed = (not has_platform_id) or previous_signature != signature
+        product['_platform'] = {
+            'productId': product_id,
+            'createdAt': created_at,
+            'createdBy': created_by,
+            'updatedAt': now if changed else (old_meta.get('updatedAt') or raw_meta.get('updatedAt') or created_at),
+            'updatedBy': SYSTEM_ACTOR_ID if changed else (old_meta.get('updatedBy') or raw_meta.get('updatedBy') or created_by),
+            'signature': signature,
+            'productCode': '%s%s%s' % (api.get('code', ''), category.get('code', ''), product.get('code', '')),
+        }
+        current_ids.add(product_id)
+        if changed:
+            changes.append({'kind': 'active', 'api': api, 'category': category, 'product': product})
+
+    for path, (api, category, product, meta) in previous.items():
+        if meta['productId'] not in current_ids:
+            changes.append({'kind': 'inactive', 'productId': meta['productId'], 'productCode': meta.get('productCode', ''), 'name': product.get('cname') or product.get('name') or ''})
+    return changes
+
+
+def product_contract(api, category, product):
+    meta = product['_platform']
+    return {
+        'productId': meta['productId'],
+        'productCode': meta['productCode'],
+        'name': product.get('cname') or product.get('name') or meta['productCode'],
+        'category': category.get('cname') or category.get('name') or None,
+        'technicalOwnerId': None,
+        'status': 'active',
+        'sourceApp': APP_ID,
+        'createdAt': meta['createdAt'],
+        'createdBy': meta['createdBy'],
+        'updatedAt': meta['updatedAt'],
+        'updatedBy': meta['updatedBy'],
+    }
+
+
+def catalog_products(store):
+    return [product_contract(api, category, product) for _, api, category, product in product_paths(store.get('data', []))]
+
+
+def append_product_events(store, changes):
+    outbox = store.setdefault('platformEventOutbox', [])
+    if not isinstance(outbox, list):
+        outbox = []
+        store['platformEventOutbox'] = outbox
+    for change in changes:
+        if change['kind'] == 'active':
+            product = product_contract(change['api'], change['category'], change['product'])
+        else:
+            product = {
+                'productId': change['productId'], 'productCode': change['productCode'],
+                'name': change['name'], 'status': 'inactive',
+            }
+        outbox.append({
+            'eventId': 'evt_' + uuid.uuid4().hex,
+            'eventType': 'product.updated.v1',
+            'occurredAt': utc_now(),
+            'sourceApp': APP_ID,
+            'actorId': SYSTEM_ACTOR_ID,
+            'entity': {'entityType': 'product', 'entityId': product['productId'], 'displayName': product.get('name')},
+            'payload': {
+                'productId': product['productId'],
+                'productCode': product['productCode'],
+                'status': product['status'],
+            },
+            'traceId': request_id(),
+        })
+    if len(outbox) > EVENT_OUTBOX_LIMIT:
+        del outbox[:-EVENT_OUTBOX_LIMIT]
+
+
+def load_platform_store():
+    """首次调用 v1 API 时完成旧数据的元数据迁移；不为迁移补发历史事件。"""
+    store = load_store()
+    if sync_product_metadata(store.get('data', [])):
+        save_store(store)
+    return store
+
+
 def build_import_file(rows):
     """基于 CRM 导入模板填充数据，生成可直接导入的 .xls 文件字节"""
     if openpyxl is None:
@@ -231,6 +371,9 @@ def do_import(rows):
     """批量导入产品信息（标准→子类→产品→参数组→选项 层级）。编码全自动，按中文名称匹配。"""
     store = load_store()
     data = store.setdefault('data', [])
+    # 为历史目录建立稳定 ID 后再比较导入后的变化，避免首次接入补发整个历史目录。
+    sync_product_metadata(data)
+    previous_data = json.loads(json.dumps(data, ensure_ascii=False))
     stats = {'api': 0, 'cat': 0, 'prod': 0, 'pg': 0, 'opt': 0, 'errors': []}
 
     for row in rows:
@@ -349,6 +492,8 @@ def do_import(rows):
         except Exception as e:
             stats['errors'].append('行: %s' % e)
 
+    changes = sync_product_metadata(data, previous_data)
+    append_product_events(store, changes)
     # save_store 内部已处理本地缓存的写锁与原子替换；此处不重复加锁
     save_store(store)
     return stats
@@ -358,25 +503,102 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC, **kwargs)
 
-    def _send_json(self, obj, status=200):
+    def _send_json(self, obj, status=200, headers=None):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_api_success(self, data, status=200, req_id=None):
+        req_id = req_id or request_id()
+        self._send_json({'data': data, 'requestId': req_id}, status, {'X-Request-Id': req_id})
+
+    def _send_api_error(self, code, message, status, req_id=None):
+        req_id = req_id or request_id()
+        self._send_json({'error': {'code': code, 'message': message}, 'requestId': req_id}, status, {'X-Request-Id': req_id})
+
+    def _platform_products(self, query):
+        store = load_platform_store()
+        products = sorted(catalog_products(store), key=lambda item: (item['productCode'], item['productId']))
+        keyword = (query.get('q') or [''])[0].strip().lower()
+        if keyword:
+            products = [item for item in products if keyword in ' '.join(str(item.get(key) or '') for key in ('productCode', 'name', 'category')).lower()]
+        try:
+            limit = int((query.get('limit') or ['50'])[0])
+        except ValueError:
+            self._send_api_error('VALIDATION_ERROR', 'limit 必须是整数', 400)
+            return
+        limit = max(1, min(limit, 100))
+        cursor = (query.get('cursor') or [''])[0]
+        start = 0
+        if cursor:
+            start = next((index + 1 for index, item in enumerate(products) if item['productId'] == cursor), 0)
+        items = products[start:start + limit]
+        page = {'items': items}
+        if start + limit < len(products):
+            page['nextCursor'] = items[-1]['productId']
+        self._send_api_success(page)
+
+    def _platform_product(self, product_id):
+        store = load_platform_store()
+        product = next((item for item in catalog_products(store) if item['productId'] == product_id), None)
+        if product is None:
+            self._send_api_error('NOT_FOUND', '产品不存在', 404)
+            return
+        self._send_api_success(product)
+
+    def _platform_events(self, query):
+        store = load_platform_store()
+        events = store.get('platformEventOutbox') or []
+        after = (query.get('after') or [''])[0]
+        if after:
+            index = next((i for i, event in enumerate(events) if event.get('eventId') == after), None)
+            if index is not None:
+                events = events[index + 1:]
+        try:
+            limit = int((query.get('limit') or ['100'])[0])
+        except ValueError:
+            self._send_api_error('VALIDATION_ERROR', 'limit 必须是整数', 400)
+            return
+        self._send_api_success({'items': events[:max(1, min(limit, 100))]})
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == 'content-type' and isinstance(value, str):
+            textual = value.startswith('text/') or value.startswith('application/javascript')
+            if textual and 'charset=' not in value.lower():
+                value = f'{value}; charset=utf-8'
+        super().send_header(keyword, value)
 
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
         super().end_headers()
 
     def do_GET(self):
-        if self.path == '/api/data':
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+        if path == '/api/health':
+            self._send_api_success({'status': 'ok', 'appId': APP_ID, 'apiVersion': 'v1', 'time': utc_now()})
+            return
+        if path == '/api/v1/products':
+            self._platform_products(query)
+            return
+        if path.startswith('/api/v1/products/'):
+            self._platform_product(unquote(path[len('/api/v1/products/'):]))
+            return
+        if path == '/api/v1/events':
+            self._platform_events(query)
+            return
+        if path == '/api/data':
             self._send_json(load_store())
             return
-        if self.path.startswith('/uploads/'):
-            rel = self.path[len('/uploads/'):]
+        if path.startswith('/uploads/'):
+            rel = path[len('/uploads/'):]
             if '..' in rel or '/' in rel:
                 self._send_json({"ok": False, "err": "bad path"}, 404)
                 return
@@ -391,6 +613,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ext = os.path.splitext(rel)[1].lower()
                 ctype = MIME_MAP.get(ext, 'application/octet-stream')
                 self.send_response(200)
+                if ctype.startswith(('text/', 'application/javascript', 'application/json')) and 'charset=' not in ctype:
+                    ctype = f'{ctype}; charset=utf-8'
                 self.send_header('Content-Type', ctype)
                 self.send_header('Content-Length', str(len(data)))
                 self.end_headers()
@@ -412,6 +636,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     store['data'] = []
                 if not isinstance(store.get('saved'), list):
                     store['saved'] = []
+                previous = load_store()
+                # 事件出站队列由服务端维护，浏览器保存整个数据对象时不得覆盖或清空它。
+                sync_product_metadata(previous.get('data', []))
+                changes = sync_product_metadata(store['data'], previous.get('data', []))
+                store['platformEventOutbox'] = previous.get('platformEventOutbox') or []
+                append_product_events(store, changes)
                 # save_store 内部已加锁，避免 Lock 不可重入导致请求卡住
                 save_store(store)
                 self._send_json({"ok": True})
@@ -488,7 +718,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 b64 = str(req.get('data', ''))
                 if not b64:
                     raise ValueError('no file data')
-                tmp = os.path.join(BASE, '_tmp_import.xlsx')
+                # DATA_FILE 是指向持久化目录的符号链接；必须解析真实路径，不能使用程序目录。
+                tmp_dir = os.path.join(os.path.dirname(os.path.realpath(DATA_FILE)), 'tmp')
+                os.makedirs(tmp_dir, exist_ok=True)
+                tmp = os.path.join(tmp_dir, '_tmp_import.xlsx')
                 with open(tmp, 'wb') as f:
                     f.write(base64.b64decode(b64))
                 try:
@@ -580,11 +813,11 @@ if __name__ == '__main__':
     # 诊断：打印环境变量键名（不打印值，避免泄露密钥）
     keys = sorted(k for k in os.environ if 'SECRET' in k.upper() or 'TENCENT' in k.upper() or k.startswith('TCB') or k == 'PORT' or 'TOKEN' in k.upper())
     print('ENV_KEYS: %s' % ','.join(keys), flush=True)
-    print('PORT_ENV=%r -> bind=%d' % (os.environ.get('PORT'), PORT), flush=True)
+    print('PORT_ENV=%r -> bind=%s:%d' % (os.environ.get('PORT'), BIND_HOST, PORT), flush=True)
     print('COS=%s bucket=%s region=%s' % ('enabled' if cos() is not None else 'disabled(本地磁盘模式)', COS_BUCKET, COS_REGION), flush=True)
     print('=' * 50, flush=True)
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.ThreadingTCPServer(('0.0.0.0', PORT), Handler) as httpd:
+    with socketserver.ThreadingTCPServer((BIND_HOST, PORT), Handler) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

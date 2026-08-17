@@ -111,11 +111,29 @@ input[type="text"],input[type="search"],input{font-size:15px}
   #sv>div:first-child .btn{width:100%;margin:2px 0}
 }
 
+
+/* WORKBENCH_EMBED_VISUAL_FOUNDATION */
+:root{color-scheme:light}
+body{background:#f6f7f8;color:#172534;padding:24px 24px 40px;font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif}
+.tabs{gap:10px;margin:0 0 18px}.tab,.tb{border-color:#d8e0e5;background:#fff;color:#456073;border-radius:8px;box-shadow:none}
+.tab:hover,.tb:hover{background:#f7fafb;border-color:#9eb2c0;color:#19354b}.tab.on,.tb.on{background:#19354b;border-color:#19354b;color:#fff;box-shadow:0 4px 12px rgba(19,53,75,.16)}
+.card{border:1px solid #dce4e8;border-radius:10px;box-shadow:none;padding:20px;margin:12px 0}.btn{border-color:#cdd9df;border-radius:7px;color:#29475b;background:#fff}.btn:hover{background:#f1f5f6;border-color:#9db2be}.btb{background:#19354b;border-color:#19354b}.btb:hover{background:#102a3c;border-color:#102a3c}.bts{background:#187451;border-color:#187451}.bts:hover{background:#125d40;border-color:#125d40}.btr{color:#b42318;border-color:#efb3ad}.btr:hover{background:#fff2f0}
+.step{margin:8px 0;min-height:54px}.sl{background:#294b62;border-radius:7px 0 0 7px}.sl:hover{background:#19354b}.sl.g{background:#e7edf0;color:#91a2ad}.sr{background:#fff;border-color:#dce4e8}.sr:hover{background:#f7fafb}.sr.p,.sr.p:hover{background:#f5f7f8;color:#8a9aa5;opacity:1}.tg{background:#f4bd4c;color:#243746;border-radius:4px}.gb{background:#f3fbf7;border-color:#b9e3cd;border-radius:10px;box-shadow:none}.ce{color:#176344;border-color:#b9e3cd;border-radius:7px;font-size:28px}.nc{border-left-color:#31a76f;background:#fff}.g2{gap:14px}.g2>div{border-color:#dce4e8;border-radius:9px;box-shadow:none}.g2>div:hover{border-color:#7894a6;box-shadow:0 8px 18px rgba(19,53,75,.08);transform:translateY(-1px)}.pl{color:#8a5d00;background:#fff6d8}.pv code{color:#8a5d00}td.fc{color:#19354b}.ic>.a{background:#19354b;border-color:#19354b}h2{color:#172534}p{color:#667b89}
+@media(max-width:768px){body{padding:16px}.card{padding:16px}.tabs{margin-bottom:14px}}
+
+
+/* WORKBENCH_BLACK_RED_THEME */
+body{background:#f7f7f5;color:#17191b}.tab.on,.tb.on,.btb,.ic>.a{background:#111315;border-color:#111315}.tab:hover,.tb:hover{color:#111315;border-color:#93999e;background:#fff}.btn:hover{border-color:#777f85;background:#f1f2f2}.sl,.sl:hover{background:#111315}.tg{background:#d92d20;color:#fff}.g2>div:hover{border-color:#d92d20;box-shadow:0 8px 18px rgba(17,19,21,.10)}.ce{color:#166344}.btr{color:#d92d20;border-color:#f1a9a3}.btr:hover{background:#fff1f0}
+
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script>
+  // 在工作台 iframe 中运行时，API 必须保留应用子路径，不能落到工作台 BFF 的 /api。
+  const PRODUCT_ENCODER_API_BASE = window.location.pathname.startsWith('/apps/product-encoder/')
+    ? '/apps/product-encoder/api'
+    : '/api';
 // ===== IN-MEMORY DATA (no localStorage dependency for data) =====
 // ===== DATA PERSISTENCE =====
 let DVER = 2;
@@ -124,11 +142,11 @@ let _DEFAULT = [{"code": "A", "name": "API 5CT", "cname": "套管和油管", "ca
 // ===== LOCAL SERVER SYNC =====
 // 本地部署版：数据优先存磁盘（server.py 的 data.json），localStorage 作为离线兜底
 function apiGet(){
-  return fetch('/api/data',{cache:'no-store'}).then(function(r){return r.ok?r.json():null}).catch(function(){return null;});
+  return fetch(PRODUCT_ENCODER_API_BASE + '/data',{cache:'no-store'}).then(function(r){return r.ok?r.json():null}).catch(function(){return null;});
 }
 function apiSet(store){
   try{
-    fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(store)}).catch(function(){});
+    fetch(PRODUCT_ENCODER_API_BASE + '/data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(store)}).catch(function(){});
   }catch(e){}
 }
 function sd(){localStorage.setItem("v_data", JSON.stringify(DATA));apiSet({data:DATA,saved:SAVED});}
@@ -269,7 +287,7 @@ function doExcel(list){
     return {code:String(s.code||"").replace(/-/g,""),cat:c.cname||c.name,unit:unit,enabled:"是",cn:s.cn,en:s.en,note:s.note||""};
   });
   M("正在生成导入文件...");
-  fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:rows})})
+  fetch(PRODUCT_ENCODER_API_BASE + '/export',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:rows})})
   .then(function(r){
     if(!r.ok){return r.json().then(function(j){throw new Error(j.err||"导出失败");});}
     return r.blob();
@@ -478,7 +496,7 @@ function uploadFile(ai,ci,pi){
     reader.onload=function(){
       let b64=reader.result.split(",")[1];
       M("正在上传...");
-      fetch("/api/upload",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:f.name,size:f.size,data:b64})})
+      fetch(PRODUCT_ENCODER_API_BASE + '/upload',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:f.name,size:f.size,data:b64})})
       .then(function(r){return r.json()})
       .then(function(res){
         if(res&&res.ok){
@@ -505,7 +523,7 @@ function delFile(ai,ci,pi,fi){
 // ===== 批量导入（标准表格 xlsx） =====
 function DL_TMPL(){
   let a=document.createElement("a");
-  a.href="/"+encodeURIComponent("产品导入标准表格.xlsx");
+  a.href=(window.location.pathname.startsWith("/apps/product-encoder/") ? "/apps/product-encoder/" : "/")+encodeURIComponent("产品导入标准表格.xlsx");
   a.download="产品导入标准表格.xlsx";
   document.body.appendChild(a);
   a.click();
@@ -523,7 +541,7 @@ function IMPORT_OPEN(){
     reader.onload=function(){
       let b64=reader.result.split(",")[1];
       M("正在导入，请稍候...");
-      fetch("/api/import_file",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:f.name,data:b64})})
+      fetch(PRODUCT_ENCODER_API_BASE + '/import_file',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:f.name,data:b64})})
       .then(function(r){return r.json()})
       .then(function(res){
         if(res&&res.ok){
@@ -662,7 +680,7 @@ function init(){
       sd();  // 服务器不可用：数据留在浏览器本地（双击打开也可用）
       M("提示：未连接本地服务，数据保存在浏览器中");
     }
-    R();RS();if(CT==="mg")RM();
+    R();RS();
   });
 }
 init();
